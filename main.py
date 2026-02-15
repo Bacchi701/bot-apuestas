@@ -21,7 +21,7 @@ SPORTS = [
     'esports_league_of_legends'  # LoL (Agregado por si te interesa)
 ]
 
-REGIONS = 'us,eu' # Casas de apuestas de US y Europa (cubre muchas internacionales)
+REGIONS = 'us,eu,uk,au' # Casas de apuestas de US y Europa (cubre muchas internacionales)
 MARKETS = 'h2h' # 'h2h' es Ganador del partido. 
 
 def enviar_discord(partido, casa, cuota_local, cuota_empate, cuota_visita):
@@ -52,7 +52,19 @@ def buscar_apuestas():
             continue
 
         data = response.json()
-        print(f"Encontrados {len(data)} eventos para {sport}") # <--- VERIFICA CUANTOS PARTIDOS ENCONTRÓ
+        if not data:
+            print(f" {sport}: La API no devolvió NADA. (Posiblemente no hay partidos activos)")
+            continue
+
+        print(f" {sport}: Se encontraron {len(data)} eventos.")
+
+        # Imprimir qué casas de apuestas se encontraron para el primer evento
+        if len(data) > 0:
+            casas_encontradas = [b['title'] for b in data[0]['bookmakers']]
+            print(f"   Casas disponibles en {sport}: {casas_encontradas}")
+            
+            if "Betano" not in casas_encontradas:
+                print(f"    OJO: Betano NO aparece en la lista para {sport}. Regiones usadas: {REGIONS}")
         
         # Recorremos los partidos encontrados
         for evento in data[:5]: # Limitamos a 5 partidos por deporte para no saturar Discord
