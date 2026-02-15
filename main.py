@@ -11,7 +11,15 @@ WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
 # 'soccer_chile_campeonato' = Primera División Chile
 # 'soccer_uefa_champs_league' = Champions League
 # 'esports_csgo' = CS:GO (Counter Strike 2 está aquí generalmente)
-SPORTS = ['soccer_chile_campeonato', 'esports_csgo'] 
+# Lista ampliada de deportes
+SPORTS = [
+    'soccer_chile_campeonato',   # Primera División Chile
+    'soccer_uefa_champs_league', # Champions League
+    'esports_csgo',              # Counter Strike 2 (La API usa la key antigua de CSGO)
+    'esports_valorant',          # Valorant
+    'esports_rocket_league',     # Rocket League
+    'esports_league_of_legends'  # LoL (Agregado por si te interesa)
+]
 
 REGIONS = 'us,eu' # Casas de apuestas de US y Europa (cubre muchas internacionales)
 MARKETS = 'h2h' # 'h2h' es Ganador del partido. 
