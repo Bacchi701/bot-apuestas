@@ -1,15 +1,14 @@
 import requests
 import os
+from datetime import datetime
+import pytz # Librería para la hora de Chile
 
 # --- CONFIGURACIÓN ---
 API_KEY = os.environ['ODDS_API_KEY']
 WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
-REGIONS = 'us,eu,uk,au' # Buscamos en todo el mundo para encontrar tus casas
+REGIONS = 'us,eu,uk,au'
 MARKETS = 'h2h'
 
-# --- TUS CASAS FAVORITAS (EN ORDEN DE PRIORIDAD) ---
-# El bot buscará estas. Si no encuentra ninguna de estas en un partido,
-# usará cualquier otra disponible como respaldo (o puedes cambiar eso).
 CASAS_VIP = [
     'Coolbet', 
     'Betano',
@@ -29,16 +28,17 @@ LINKS_CASAS = {
     'Pinnacle': 'https://www.pinnacle.com/'
 }
 
-# Títulos bonitos para Discord
+# TÍTULOS BONITOS
 NOMBRES_TORNEOS = {
     'soccer_chile_campeonato': '🇨🇱 Chile - Primera División',
     'soccer_uefa_champs_league': '🇪🇺 UEFA Champions League',
-    'esports_csgo': 'Counter Strike 2',
-    'esports_valorant': 'Valorant',
-    'esports_league_of_legends': 'League of Legends',
-    'esports_rocket_league': 'Rocket League'
+    'esports_csgo': '🔫 Counter Strike 2',
+    'esports_valorant': '✨ Valorant',
+    'esports_league_of_legends': '🛡️ League of Legends',
+    'esports_rocket_league': '🚗 Rocket League'
 }
 
+# DEPORTES A BUSCAR
 SPORTS = [
     'soccer_chile_campeonato',
     'soccer_uefa_champs_league',
@@ -46,6 +46,23 @@ SPORTS = [
     'esports_valorant',
     'esports_league_of_legends'
 ]
+
+# --- FUNCIONES ---
+
+def formatear_hora_chile(fecha_iso):
+    """Convierte la hora UTC de la API a Hora Chile"""
+    try:
+        fecha_utc = datetime.strptime(fecha_iso, "%Y-%m-%dT%H:%M:%SZ")
+        fecha_utc = fecha_utc.replace(tzinfo=pytz.utc)
+        
+        tz_chile = pytz.timezone('America/Santiago')
+        fecha_chile = fecha_utc.astimezone(tz_chile)
+        
+        dias = {0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue", 4: "Vie", 5: "Sáb", 6: "Dom"}
+        dia_str = dias[fecha_chile.weekday()]
+        return f"{dia_str} {fecha_chile.strftime('%H:%M')}"
+    except:
+        return "Hora desconocida"
 
 def obtener_link(nombre_casa):
     url = LINKS_CASAS.get(nombre_casa)
@@ -61,13 +78,13 @@ def enviar_resumen_discord(titulo, partidos, color):
             "title": titulo,
             "color": color,
             "fields": partidos,
-            "footer": {"text": "📊 Bot de Apuestas | Prioridad: VIP"}
+            "footer": {"text": "📊 Bot de Apuestas | Hora CLT"}
         }]
     }
     requests.post(WEBHOOK_URL, json=mensaje)
 
 def buscar_apuestas():
-    print("--- 🔄 INICIANDO BÚSQUEDA VIP ---")
+    print("--- 🔄 INICIANDO BÚSQUEDA SIN FILTROS ---")
     
     for sport in SPORTS:
         url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={MARKETS}&oddsFormat=decimal'
@@ -75,7 +92,6 @@ def buscar_apuestas():
         try:
             response = requests.get(url)
             if response.status_code != 200: continue
-
             data = response.json()
             if not data: continue
 
@@ -86,25 +102,24 @@ def buscar_apuestas():
             if "esports" in sport: color_embed = 10181046
             if "chile" in sport: color_embed = 13632027
 
-            for evento in data[:10]:
+            # Procesamos TODOS los eventos (límite 15 para no saturar un solo mensaje)
+            for evento in data[:15]:
                 titulo_partido = f"{evento['home_team']} 🆚 {evento['away_team']}"
+                hora_partido = formatear_hora_chile(evento['commence_time'])
                 
-                # --- LÓGICA DE FILTRO VIP ---
+                # --- SELECCIÓN DE CASA ---
+                mis_bookies = {b['title']: b for b in evento['bookmakers']}
                 casa_seleccionada = None
                 
-                # 1. Primero buscamos si está alguna de tus favoritas
-                mis_bookies = {b['title']: b for b in evento['bookmakers']}
-                
+                # Buscamos VIP
                 for vip in CASAS_VIP:
                     if vip in mis_bookies:
                         casa_seleccionada = mis_bookies[vip]
-                        break # ¡Encontramos una favorita! Dejamos de buscar
+                        break
                 
-                # 2. Si NO encontramos ninguna VIP, ¿usamos otra o saltamos?
-                # AHORA: Usamos la primera que haya como respaldo.
-                # Si quieres que SOLO muestre VIPs, cambia la linea de abajo a: if not casa_seleccionada: continue
+                # Si no hay VIP, usamos la primera que exista
                 if not casa_seleccionada and evento['bookmakers']:
-                    casa_seleccionada = evento['bookmakers'][0] 
+                    casa_seleccionada = evento['bookmakers'][0]
                 
                 if casa_seleccionada:
                     nombre = casa_seleccionada['title']
@@ -115,10 +130,11 @@ def buscar_apuestas():
                     c_visita = next((x['price'] for x in mercado if x['name'] == evento['away_team']), '-')
                     c_empate = next((x['price'] for x in mercado if x['name'] == 'Draw'), '-')
 
-                    detalle = (f"Local: **{c_local}** | Empate: {c_empate} | Visita: **{c_visita}**\n"
+                    detalle = (f"🕒 {hora_partido}\n"
+                               f"🏠 **{c_local}** | 🤝 {c_empate} | ✈️ **{c_visita}**\n"
                                f"🔗 Vía: {link}")
                 else:
-                    detalle = "Cuotas no disponibles."
+                    detalle = f"🕒 {hora_partido}\nCuotas no disponibles aún."
 
                 lista_campos_discord.append({
                     "name": titulo_partido,
@@ -130,7 +146,7 @@ def buscar_apuestas():
             enviar_resumen_discord(nombre_bonito, lista_campos_discord, color_embed)
 
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error en {sport}: {e}")
 
 if __name__ == "__main__":
     buscar_apuestas()
