@@ -12,24 +12,21 @@ MARKETS = 'h2h'
 # usará cualquier otra disponible como respaldo (o puedes cambiar eso).
 CASAS_VIP = [
     'Coolbet', 
-    'Betano', 
-    '1xBet', 
-    'Vulkanbet', 
-    'bet365', 
-    'Betsson', 
+    'Betano',
+    'GGBET',
+    '1xBet',  
+    'bet365',
     'Pinnacle' # Agrego Pinnacle porque suele tener buenas cuotas referencia
 ]
 
 # Diccionario de enlaces
 LINKS_CASAS = {
-    'Coolbet': 'https://www.coolbet.com/cl/deportes',
+    'Coolbet': 'https://www.coolbetchile.com/cl/deportes/recommendations',
     'Betano': 'https://www.betano.com/',
+    'GGBET': 'https://gg.bet/es-es',
     '1xBet': 'https://cl.1xbet.com/',
-    'Vulkanbet': 'https://vulkanbet.com/es/sports',
     'bet365': 'https://www.bet365.com/',
-    'Betsson': 'https://www.betsson.com/cl',
-    'Pinnacle': 'https://www.pinnacle.com/',
-    'Winamax': 'https://www.winamax.es/'
+    'Pinnacle': 'https://www.pinnacle.com/'
 }
 
 # Títulos bonitos para Discord
