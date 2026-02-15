@@ -1,114 +1,134 @@
 import requests
 import os
-import json
 
 # --- CONFIGURACIÓN ---
 API_KEY = os.environ['ODDS_API_KEY']
 WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
+REGIONS = 'us,eu,uk,au'
+MARKETS = 'h2h'
 
-# Usamos todas las regiones para intentar encontrar a Betano
-REGIONS = 'us,eu,uk,au' 
-MARKETS = 'h2h' 
+# Diccionario para que los títulos se vean bonitos en Discord
+NOMBRES_TORNEOS = {
+    'soccer_chile_campeonato': '🇨🇱 Chile - Primera División',
+    'soccer_uefa_champs_league': '🇪🇺 UEFA Champions League',
+    'esports_csgo': '🔫 Counter Strike 2',
+    'esports_valorant': '✨ Valorant',
+    'esports_league_of_legends': '🛡️ League of Legends',
+    'esports_rocket_league': '🚗 Rocket League'
+}
 
-# LISTA MAESTRA DE DEPORTES
-# Aunque hoy no funcionen, dejamos las llaves listas para cuando activen los torneos.
+# Diccionario de enlaces a las casas de apuestas (Puedes agregar más)
+LINKS_CASAS = {
+    'Coolbet': 'https://www.coolbet.com/cl/deportes',
+    'Betano': 'https://www.betano.com/',
+    'Betsson': 'https://www.betsson.com/cl',
+    '1xBet': 'https://cl.1xbet.com/',
+    'Marathon Bet': 'https://www.marathonbet.com/',
+    'Unibet': 'https://www.unibet.com/',
+    'Betway': 'https://betway.com/',
+    'Pinnacle': 'https://www.pinnacle.com/',
+    'Winamax': 'https://www.winamax.es/'
+}
+
+# Lista de deportes a buscar
 SPORTS = [
-    'soccer_chile_campeonato',      # Chile Primera
-    'soccer_uefa_champs_league',    # Champions
-    'esports_csgo',                 # Counter Strike 2 (Suele usar esta key)
-    'esports_league_of_legends',    # LoL
-    'esports_valorant',             # Valorant
-    'esports_rocket_league',        # Rocket League
-    'esports_dota_2'                # Dota 2 (Por si acaso)
+    'soccer_chile_campeonato',
+    'soccer_uefa_champs_league',
+    'esports_csgo',
+    'esports_valorant',
+    'esports_league_of_legends'
 ]
 
-def enviar_discord(partido, casa, cuota_local, cuota_empate, cuota_visita, deporte):
-    # Diferenciamos con emojis
-    if "soccer" in deporte:
-        emoji = "⚽"
-    elif "csgo" in deporte:
-        emoji = "🔫 CS2"
-    elif "valorant" in deporte:
-        emoji = "✨ VAL"
-    elif "league" in deporte and "legends" in deporte:
-        emoji = "🛡️ LOL"
-    else:
-        emoji = "🎮"
-    
-    embed_color = 5763719 # Verde básico
-    
-    # Destacar si es una cuota alta (mayor a 2.5)
-    try:
-        if float(cuota_local) > 2.5 or float(cuota_visita) > 2.5:
-            embed_color = 15158332 # Rojo llamativo
-    except:
-        pass
+def obtener_link(nombre_casa):
+    # Si la casa está en nuestra lista, devolvemos el link formateado para Discord
+    # Si no, devolvemos solo el nombre
+    url = LINKS_CASAS.get(nombre_casa)
+    if url:
+        return f"[{nombre_casa}]({url})" # Formato Markdown de Discord: [Texto](URL)
+    return nombre_casa
 
+def enviar_resumen_discord(titulo, partidos, color):
+    if not partidos:
+        return
+
+    # Estructura del Embed agrupado
     mensaje = {
         "embeds": [{
-            "title": f"{emoji} {partido}",
-            "color": embed_color,
-            "fields": [
-                {"name": "Torneo", "value": deporte, "inline": False},
-                {"name": "Casa de Apuesta", "value": casa, "inline": True},
-                {"name": "Local (1)", "value": str(cuota_local), "inline": True},
-                {"name": "Visita (2)", "value": str(cuota_visita), "inline": True},
-                {"name": "Empate (X)", "value": str(cuota_empate), "inline": True}
-            ],
-            "footer": {"text": "Bot de Apuestas - Vigilando 24/7"}
+            "title": titulo,
+            "color": color,
+            "fields": partidos, # Aquí pegamos la lista de partidos procesados
+            "footer": {"text": "📊 Bot de Apuestas | Cuotas pueden variar"}
         }]
     }
-    requests.post(WEBHOOK_URL, json=mensaje)
+    
+    try:
+        requests.post(WEBHOOK_URL, json=mensaje)
+    except Exception as e:
+        print(f"Error enviando a Discord: {e}")
 
 def buscar_apuestas():
-    print("--- 🤖 INICIANDO BARRIDO DE APUESTAS ---")
+    print("--- 🔄 INICIANDO RESUMEN DE APUESTAS ---")
     
     for sport in SPORTS:
         url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={MARKETS}&oddsFormat=decimal'
-        response = requests.get(url)
         
-        if response.status_code != 200:
-            # Si da error, solo lo registramos y seguimos con el siguiente deporte
-            # (Es normal que los eSports den error si no hay torneo activo)
-            print(f"⚠️ {sport}: No disponible o inactivo por ahora.")
-            continue
+        try:
+            response = requests.get(url)
+            if response.status_code != 200:
+                print(f"⚠️ Salto {sport}: API respondió {response.status_code}")
+                continue
 
-        data = response.json()
-        
-        if not data:
-            print(f"ℹ️ {sport}: Activo, pero sin partidos hoy.")
-            continue
+            data = response.json()
+            if not data:
+                print(f"ℹ️ {sport}: Sin eventos hoy.")
+                continue
+
+            # --- PROCESAMIENTO AGRUPADO ---
+            print(f"✅ Procesando {len(data)} partidos de {sport}...")
             
-        print(f"✅ {sport}: ¡{len(data)} eventos encontrados!")
-
-        # Procesamos los eventos
-        for evento in data: # Quitamos el límite para que revise TODO
-            teams = f"{evento['home_team']} vs {evento['away_team']}"
+            lista_campos_discord = []
             
-            # Buscamos la mejor cuota disponible
-            for bookmaker in evento['bookmakers']:
-                nombre_casa = bookmaker['title']
-                
-                # FILTRO DE CASAS DE APUESTAS
-                # Si quieres reducir el spam, descomenta las líneas de abajo:
-                # casas_interes = ['Coolbet', 'Betsson', 'Betano', '1xBet', 'Marathon Bet']
-                # if nombre_casa not in casas_interes: continue
+            # Definimos color según deporte
+            color_embed = 5763719 # Verde default
+            if "esports" in sport: color_embed = 10181046 # Morado gamer
+            if "chile" in sport: color_embed = 13632027 # Rojo chileno
 
-                mercado = bookmaker['markets'][0]['outcomes']
+            # Recorremos los eventos (Máximo 10 para no romper el límite de Discord)
+            for evento in data[:10]:
+                titulo_partido = f"{evento['home_team']} 🆚 {evento['away_team']}"
                 
-                # Obtener cuotas con seguridad (si no existen pone 0)
-                c_local = next((x['price'] for x in mercado if x['name'] == evento['home_team']), 0)
-                c_visita = next((x['price'] for x in mercado if x['name'] == evento['away_team']), 0)
-                c_empate = next((x['price'] for x in mercado if x['name'] == 'Draw'), 0)
-
-                # FILTRO DE VALOR
-                # Solo notificar si alguna cuota vale la pena (ej: mayor a 1.6)
-                if c_local > 1.6 or c_visita > 1.6:
-                    enviar_discord(teams, nombre_casa, c_local, c_empate, c_visita, sport)
+                # Buscamos la mejor casa (o la primera disponible)
+                mejor_opcion = "No disponible"
+                
+                if evento['bookmakers']:
+                    bookie = evento['bookmakers'][0] # Tomamos la primera casa que nos da la API
+                    nombre_casa = bookie['title']
+                    link_casa = obtener_link(nombre_casa)
                     
-                # Break para no repetir el mismo partido 20 veces con distintas casas
-                # (Solo enviamos la primera casa que cumpla la condición)
-                break 
+                    mercado = bookie['markets'][0]['outcomes']
+                    c_local = next((x['price'] for x in mercado if x['name'] == evento['home_team']), 0)
+                    c_visita = next((x['price'] for x in mercado if x['name'] == evento['away_team']), 0)
+                    c_empate = next((x['price'] for x in mercado if x['name'] == 'Draw'), 0)
+                    
+                    # Formato del texto dentro del campo
+                    detalle = (f"🏠 **{c_local}** | 🤝 {c_empate} | ✈️ **{c_visita}**\n"
+                               f"🔗 Vía: {link_casa}")
+                else:
+                    detalle = "Cuotas no publicadas aún."
+
+                # Agregamos este partido a la lista del torneo
+                lista_campos_discord.append({
+                    "name": titulo_partido,
+                    "value": detalle,
+                    "inline": False # False para que queden uno debajo del otro (lista)
+                })
+
+            # ENVIAR EL PAQUETE COMPLETO
+            nombre_bonito = NOMBRES_TORNEOS.get(sport, sport.replace('_', ' ').title())
+            enviar_resumen_discord(nombre_bonito, lista_campos_discord, color_embed)
+
+        except Exception as e:
+            print(f"❌ Error crítico en {sport}: {str(e)}")
 
 if __name__ == "__main__":
     buscar_apuestas()
