@@ -52,6 +52,7 @@ def buscar_apuestas():
             continue
 
         data = response.json()
+        print(f"Encontrados {len(data)} eventos para {sport}") # <--- VERIFICA CUANTOS PARTIDOS ENCONTRÓ
         
         # Recorremos los partidos encontrados
         for evento in data[:5]: # Limitamos a 5 partidos por deporte para no saturar Discord
