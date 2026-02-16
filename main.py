@@ -13,11 +13,11 @@ BOOKIES_VIP = ['coolbet', 'betano', '1xbet', 'ggbet', 'bet365']
 
 # --- ENLACES DIRECTOS (Diccionario Maestro) ---
 LINKS_MAESTROS = {
-    'coolbet': 'https://www.coolbet.com/cl/deportes',
-    'betano': 'https://www.betano.com/',
-    '1xbet': 'https://cl.1xbet.com/',
+    'coolbet': 'https://www.coolbetchile.com',
+    'betano': 'https://lat.betano.com/',
+    '1xbet': 'https://chile.1xbet.com/es',
     'ggbet': 'https://gg.bet/es/sports',
-    'bet365': 'https://www.bet365.com/'
+    'bet365': 'https://www.bet365.es/'
 }
 
 # Configuración Ligas Fútbol
