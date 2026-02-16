@@ -1,15 +1,13 @@
-name: Bot Apuestas
+name: Bot Apuestas Scraper
 
 on:
   schedule:
-    # Se ejecuta cada 6 horas (para cuidar tus 500 llamadas mensuales gratis)
-    # Cron syntax: minuto hora dia mes dia_semana
-    - cron: '0 */2 * * *' 
-  workflow_dispatch: # Permite ejecutarlo manualmente con un botón para probar
+    - cron: '0 */2 * * *' # Cada 2 horas
+  workflow_dispatch:
 
 jobs:
-  run-bot:
-    runs-on: ubuntu-latest
+  run-scraper:
+    runs-on: ubuntu-latest # Esto ya incluye Chrome pre-instalado
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
@@ -22,8 +20,8 @@ jobs:
       - name: Instalar librerías
         run: pip install -r requirements.txt
 
-      - name: Ejecutar Bot
+      - name: Ejecutar Scraper
         env:
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          # Ya no necesitamos ODDS_API_KEY
         run: python main.py

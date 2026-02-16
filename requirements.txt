@@ -1,2 +1,6 @@
 requests
+selenium
+webdriver-manager
+beautifulsoup4
 pytz
+fake-useragent

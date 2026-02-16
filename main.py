@@ -1,152 +1,171 @@
-import requests
 import os
+import time
+import requests
+import json
 from datetime import datetime
-import pytz # Librería para la hora de Chile
+import pytz
+from bs4 import BeautifulSoup
+
+# Librerías de Scraping (Navegador)
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from fake_useragent import UserAgent
 
 # --- CONFIGURACIÓN ---
-API_KEY = os.environ['ODDS_API_KEY']
 WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
-REGIONS = 'us,eu,uk,au'
-MARKETS = 'h2h'
 
-CASAS_VIP = [
-    'Coolbet', 
-    'Betano',
-    'GGBET',
-    '1xBet',  
-    'bet365',
-    'Pinnacle' # Agrego Pinnacle porque suele tener buenas cuotas referencia
-]
+# URL Objetivo: OddsPortal Próximos Partidos de eSports
+TARGET_URL = "https://www.oddsportal.com/matches/esports/"
 
-# Diccionario de enlaces
-LINKS_CASAS = {
-    'Coolbet': 'https://www.coolbetchile.com/cl/deportes/recommendations',
-    'Betano': 'https://www.betano.com/',
-    'GGBET': 'https://gg.bet/es-es',
-    '1xBet': 'https://cl.1xbet.com/',
-    'bet365': 'https://www.bet365.com/',
-    'Pinnacle': 'https://www.pinnacle.com/'
-}
+# Configuración de colores para Discord
+COLOR_ESPORTS = 10181046 # Morado
 
-# TÍTULOS BONITOS
-NOMBRES_TORNEOS = {
-    'soccer_chile_campeonato': '🇨🇱 Chile - Primera División',
-    'soccer_uefa_champs_league': '🇪🇺 UEFA Champions League',
-    'esports_csgo': 'Counter Strike 2',
-    'esports_valorant': 'Valorant',
-    'esports_league_of_legends': 'League of Legends',
-    'esports_rocket_league': 'Rocket League'
-}
+def obtener_hora_chile():
+    tz_chile = pytz.timezone('America/Santiago')
+    return datetime.now(tz_chile).strftime("%H:%M")
 
-# DEPORTES A BUSCAR
-SPORTS = [
-    'soccer_chile_campeonato',
-    'soccer_uefa_champs_league',
-    'esports_csgo',
-    'esports_valorant',
-    'esports_league_of_legends'
-]
+def configurar_driver():
+    """Configura un navegador Chrome indetectable (headless)"""
+    ua = UserAgent()
+    user_agent = ua.random
 
-# --- FUNCIONES ---
-
-def formatear_hora_chile(fecha_iso):
-    """Convierte la hora UTC de la API a Hora Chile"""
-    try:
-        fecha_utc = datetime.strptime(fecha_iso, "%Y-%m-%dT%H:%M:%SZ")
-        fecha_utc = fecha_utc.replace(tzinfo=pytz.utc)
-        
-        tz_chile = pytz.timezone('America/Santiago')
-        fecha_chile = fecha_utc.astimezone(tz_chile)
-        
-        dias = {0: "Lun", 1: "Mar", 2: "Mié", 3: "Jue", 4: "Vie", 5: "Sáb", 6: "Dom"}
-        dia_str = dias[fecha_chile.weekday()]
-        return f"{dia_str} {fecha_chile.strftime('%H:%M')}"
-    except:
-        return "Hora desconocida"
-
-def obtener_link(nombre_casa):
-    url = LINKS_CASAS.get(nombre_casa)
-    if url:
-        return f"[{nombre_casa}]({url})"
-    return nombre_casa
-
-def enviar_resumen_discord(titulo, partidos, color):
-    if not partidos: return
-
-    mensaje = {
-        "embeds": [{
-            "title": titulo,
-            "color": color,
-            "fields": partidos,
-            "footer": {"text": "📊 Bot de Apuestas | Hora CLT"}
-        }]
-    }
-    requests.post(WEBHOOK_URL, json=mensaje)
-
-def buscar_apuestas():
-    print("--- 🔄 INICIANDO BÚSQUEDA SIN FILTROS ---")
+    chrome_options = Options()
+    chrome_options.add_argument("--headless=new") # Sin interfaz gráfica
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument(f'user-agent={user_agent}')
+    chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled") # Ocultar que es un bot
     
-    for sport in SPORTS:
-        url = f'https://api.the-odds-api.com/v4/sports/{sport}/odds/?apiKey={API_KEY}&regions={REGIONS}&markets={MARKETS}&oddsFormat=decimal'
+    # Instalamos el driver automáticamente
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_options)
+    return driver
+
+def enviar_discord(partidos):
+    if not partidos:
+        print("No hay partidos para enviar.")
+        return
+
+    # Dividimos en bloques de 10 para no saturar el mensaje
+    chunks = [partidos[i:i + 10] for i in range(0, len(partidos), 10)]
+
+    for chunk in chunks:
+        fields = []
+        for p in chunk:
+            fields.append({
+                "name": f"{p['hora']} | {p['torneo']}",
+                "value": f"🎮 **{p['equipo1']}** vs **{p['equipo2']}**\n"
+                         f"💰 1: **{p['cuota1']}** | 2: **{p['cuota2']}**\n"
+                         f"🔗 [Ver en OddsPortal]({p['link']})",
+                "inline": False
+            })
+
+        embed = {
+            "embeds": [{
+                "title": "👾 Alerta eSports - OddsPortal",
+                "description": "Mejores cuotas detectadas en el mercado.",
+                "color": COLOR_ESPORTS,
+                "fields": fields,
+                "footer": {"text": f"Scraper v1.0 | Hora Actual: {obtener_hora_chile()}"}
+            }]
+        }
+        requests.post(WEBHOOK_URL, json=embed)
+        time.sleep(1) # Pausa pequeña para no spamear
+
+def scrapear_oddsportal():
+    print("--- 🕷️ INICIANDO SCRAPER DE ODDSPORTAL ---")
+    driver = configurar_driver()
+    
+    try:
+        print(f"Navegando a: {TARGET_URL}")
+        driver.get(TARGET_URL)
         
-        try:
-            response = requests.get(url)
-            if response.status_code != 200: continue
-            data = response.json()
-            if not data: continue
+        # Esperamos hasta 15 segundos a que aparezca la tabla de partidos
+        # Buscamos un elemento común en OddsPortal (suelen cambiar clases, buscamos algo genérico)
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*='eventRow']"))
+        )
+        print("✅ Página cargada. Extrayendo HTML...")
+        
+        # Pasamos el HTML a BeautifulSoup para procesarlo rápido
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        
+        partidos_encontrados = []
+        
+        # OddsPortal usa filas con clases dinámicas, pero suelen contener "eventRow"
+        # OJO: Esto puede requerir ajustes si cambian el diseño
+        filas = soup.select("div[class*='eventRow']")
+        
+        print(f"🔍 Se detectaron {len(filas)} filas potenciales.")
 
-            lista_campos_discord = []
-            
-            # Color según deporte
-            color_embed = 5763719
-            if "esports" in sport: color_embed = 10181046
-            if "chile" in sport: color_embed = 13632027
+        for fila in filas[:15]: # Limitamos a los primeros 15 próximos
+            try:
+                # Extraer Texto del Torneo (A veces está en un header anterior, simplificamos aquí)
+                # Intentamos sacar equipos
+                textos = list(fila.stripped_strings)
+                
+                # Lógica heurística: Si tiene menos de 4 elementos, probablemente no es un partido válido
+                if len(textos) < 4: continue
+                
+                # En OddsPortal la estructura suele ser: Hora, Equipo1, Equipo2, Cuota1, Cuota2
+                # Esta parte es la más delicada y depende del CSS actual de OddsPortal
+                
+                # Intentamos buscar los nombres de equipos específicamente
+                participantes = fila.select("a[class*='participant-name']")
+                if len(participantes) < 2: continue
+                
+                equipo1 = participantes[0].text.strip()
+                equipo2 = participantes[1].text.strip()
+                
+                # Buscamos cuotas (suelen estar en divs con clase 'odds')
+                cuotas = fila.select("div[class*='odds-height']")
+                c1 = "-"
+                c2 = "-"
+                
+                if len(cuotas) >= 2:
+                    c1 = cuotas[0].text.strip()
+                    c2 = cuotas[1].text.strip()
+                
+                # Link del partido
+                link_elem = fila.select_one("a[href^='/esports/']")
+                link = "https://www.oddsportal.com" + link_elem['href'] if link_elem else TARGET_URL
+                
+                # Hora (Suele ser el primer texto)
+                hora = textos[0] if textos else "Hoy"
 
-            # Procesamos TODOS los eventos (límite 15 para no saturar un solo mensaje)
-            for evento in data[:15]:
-                titulo_partido = f"{evento['home_team']} 🆚 {evento['away_team']}"
-                hora_partido = formatear_hora_chile(evento['commence_time'])
-                
-                # --- SELECCIÓN DE CASA ---
-                mis_bookies = {b['title']: b for b in evento['bookmakers']}
-                casa_seleccionada = None
-                
-                # Buscamos VIP
-                for vip in CASAS_VIP:
-                    if vip in mis_bookies:
-                        casa_seleccionada = mis_bookies[vip]
-                        break
-                
-                # Si no hay VIP, usamos la primera que exista
-                if not casa_seleccionada and evento['bookmakers']:
-                    casa_seleccionada = evento['bookmakers'][0]
-                
-                if casa_seleccionada:
-                    nombre = casa_seleccionada['title']
-                    link = obtener_link(nombre)
-                    mercado = casa_seleccionada['markets'][0]['outcomes']
-                    
-                    c_local = next((x['price'] for x in mercado if x['name'] == evento['home_team']), '-')
-                    c_visita = next((x['price'] for x in mercado if x['name'] == evento['away_team']), '-')
-                    c_empate = next((x['price'] for x in mercado if x['name'] == 'Draw'), '-')
+                # Filtro simple: Si no hay cuotas, pasamos
+                if c1 == "-" or c2 == "-": continue
 
-                    detalle = (f"Horario: {hora_partido}\n"
-                               f"Local **{c_local}** | Empate: {c_empate} | Visita: **{c_visita}**\n"
-                               f"🔗 Vía: {link}")
-                else:
-                    detalle = f"🕒 {hora_partido}\nCuotas no disponibles aún."
-
-                lista_campos_discord.append({
-                    "name": titulo_partido,
-                    "value": detalle,
-                    "inline": False
+                partidos_encontrados.append({
+                    "torneo": "eSports General", # Difícil de sacar preciso sin lógica compleja
+                    "hora": hora,
+                    "equipo1": equipo1,
+                    "equipo2": equipo2,
+                    "cuota1": c1,
+                    "cuota2": c2,
+                    "link": link
                 })
+                
+            except Exception as e:
+                # Si falla una fila, seguimos con la otra
+                continue
 
-            nombre_bonito = NOMBRES_TORNEOS.get(sport, sport)
-            enviar_resumen_discord(nombre_bonito, lista_campos_discord, color_embed)
+        print(f"✅ Extracción finalizada: {len(partidos_encontrados)} partidos válidos.")
+        enviar_discord(partidos_encontrados)
 
-        except Exception as e:
-            print(f"Error en {sport}: {e}")
+    except Exception as e:
+        print(f"❌ Error durante el scraping: {e}")
+        # Tomar captura de pantalla para debug (opcional, se guarda en el servidor)
+        # driver.save_screenshot("error_screenshot.png")
+    finally:
+        driver.quit()
+        print("--- 🏁 DRIVER CERRADO ---")
 
 if __name__ == "__main__":
-    buscar_apuestas()
+    scrapear_oddsportal()
