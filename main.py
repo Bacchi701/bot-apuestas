@@ -1,50 +1,26 @@
 import os
 import time
-import requests
-import re
+import cloudscraper # La librería mágica
+from bs4 import BeautifulSoup
 from datetime import datetime
 import pytz
-from bs4 import BeautifulSoup
-
-# Librerías de Navegador
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from fake_useragent import UserAgent
+import requests
 
 # --- CONFIGURACIÓN ---
 WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
-
-# Usamos BetExplorer (Más fácil de leer)
 TARGET_URL = "https://www.betexplorer.com/next/esports/"
-
-COLOR_ESPORTS = 10181046 # Morado
+COLOR_ESPORTS = 10181046 
 
 def obtener_hora_chile():
     tz_chile = pytz.timezone('America/Santiago')
     return datetime.now(tz_chile).strftime("%H:%M")
 
-def configurar_driver():
-    ua = UserAgent()
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new") 
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument(f'user-agent={ua.random}')
-    chrome_options.add_argument("--window-size=1920,1080")
-    
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    return driver
-
 def enviar_discord(partidos):
-    if not partidos: return
+    if not partidos:
+        print("⚠️ No se encontraron partidos con cuotas para enviar.")
+        return
 
-    # Dividimos en bloques de 10
+    # Enviamos en grupos de 10
     chunks = [partidos[i:i + 10] for i in range(0, len(partidos), 10)]
 
     for chunk in chunks:
@@ -54,109 +30,107 @@ def enviar_discord(partidos):
                 "name": f"⏰ {p['hora']} | {p['torneo']}",
                 "value": f"🎮 **{p['partido']}**\n"
                          f"📊 1: **{p['c1']}** | 2: **{p['c2']}**\n"
-                         f"🔗 [Ver en BetExplorer]({p['link']})",
+                         f"🔗 [Ver Detalles]({p['link']})",
                 "inline": False
             })
 
         embed = {
             "embeds": [{
                 "title": "👾 Alerta eSports - BetExplorer",
+                "description": "Partidos próximos detectados vía CloudScraper",
                 "color": COLOR_ESPORTS,
                 "fields": fields,
-                "footer": {"text": f"Scraper v2.0 | Hora Actual: {obtener_hora_chile()}"}
+                "footer": {"text": f"Modo Ligero v3.0 | Hora: {obtener_hora_chile()}"}
             }]
         }
-        requests.post(WEBHOOK_URL, json=embed)
-        time.sleep(1) 
+        try:
+            requests.post(WEBHOOK_URL, json=embed)
+            time.sleep(1)
+        except Exception as e:
+            print(f"Error enviando a Discord: {e}")
 
-def limpiar_texto(texto):
-    """Elimina espacios extra y saltos de línea"""
-    return " ".join(texto.split())
-
-def scrapear_betexplorer():
-    print("--- 🕵️ INICIANDO RASTREO EN BETEXPLORER ---")
-    driver = configurar_driver()
+def scrapear_ligero():
+    print("--- 🚀 INICIANDO MODO LIGERO (CLOUDSCRAPER) ---")
+    
+    # Creamos un scraper que simula ser Chrome pero sin abrir Chrome
+    scraper = cloudscraper.create_scraper()
     
     try:
-        print(f"Navegando a: {TARGET_URL}")
-        driver.get(TARGET_URL)
+        print(f"Consultando: {TARGET_URL}")
+        response = scraper.get(TARGET_URL)
         
-        # Esperamos a que aparezca la tabla de partidos (clase 'table-main')
-        WebDriverWait(driver, 20).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "table-main"))
-        )
-        print("✅ Tabla detectada. Analizando datos...")
+        if response.status_code != 200:
+            print(f"❌ Error al entrar a la página: {response.status_code}")
+            return
+
+        print("✅ Página descargada. Analizando HTML...")
+        soup = BeautifulSoup(response.text, 'html.parser')
         
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
+        # Buscamos la tabla principal
         tabla = soup.find("table", class_="table-main")
+        if not tabla:
+            print("⚠️ No encontré la tabla de partidos. Puede que la página haya cambiado o Cloudflare nos bloqueó.")
+            # Debug: imprimir un poco del texto para ver qué pasó
+            print(f"Contenido recibido: {response.text[:200]}...")
+            return
+
         filas = tabla.find_all("tr")
-        
-        print(f"🔍 Filas totales encontradas: {len(filas)}")
+        print(f"🔍 Filas detectadas: {len(filas)}")
         
         partidos = []
-        torneo_actual = "Torneo General" # Guardamos el último torneo visto (filas header)
+        torneo_actual = "Torneo General"
 
         for fila in filas:
-            # 1. ¿Es un título de torneo? (Suelen tener links a la liga)
+            # Detectar Torneo
             if "js-tournament" in fila.get("class", []):
-                link_torneo = fila.find("a")
-                if link_torneo:
-                    torneo_actual = link_torneo.text.strip()
+                link_t = fila.find("a")
+                if link_t: torneo_actual = link_t.text.strip()
                 continue
             
-            # 2. ¿Es un partido? (No debe tener la clase 'rt' que es header de tabla)
-            if "rt" in fila.get("class", []):
-                continue
-                
+            # Ignorar cabeceras
+            if "rt" in fila.get("class", []): continue
+            
             cols = fila.find_all("td")
-            if len(cols) < 5: continue # Si no tiene suficientes columnas, no sirve
+            if len(cols) < 5: continue
 
             try:
-                # Extracción Robusta
-                nombre_partido = limpiar_texto(cols[0].text)
-                link_partido = "https://www.betexplorer.com" + cols[0].find("a")['href'] if cols[0].find("a") else TARGET_URL
+                # Extracción de datos
+                nombres = cols[0].text.strip()
+                # Limpieza de nombre (a veces tiene basura)
+                nombres = " ".join(nombres.split())
                 
-                # La hora suele estar en la columna 1 o dentro del texto
-                hora = limpiar_texto(cols[1].text)
+                link_suffix = cols[0].find("a")['href'] if cols[0].find("a") else ""
+                link_full = "https://www.betexplorer.com" + link_suffix if link_suffix else TARGET_URL
+                
+                hora = cols[1].text.strip()
                 if not hora: hora = "Hoy"
-                
-                # Cuotas (Suelen estar al final)
-                # Buscamos columnas con atributos data-odd
+
+                # Cuotas (buscamos atributos data-odd que usa BetExplorer)
                 odds = fila.find_all("td", attrs={"data-odd": True})
                 
-                c1 = "-"
-                c2 = "-"
-                
+                c1, c2 = "-", "-"
                 if len(odds) >= 2:
                     c1 = odds[0].text.strip()
                     c2 = odds[1].text.strip()
                 
-                # Filtro: Si no hay cuotas reales, saltamos
-                if c1 == "" or c2 == "": continue
-
-                partidos.append({
-                    "torneo": torneo_actual,
-                    "partido": nombre_partido,
-                    "hora": hora,
-                    "c1": c1,
-                    "c2": c2,
-                    "link": link_partido
-                })
-                
+                # Solo guardamos si hay cuotas válidas (distinto de guión o vacío)
+                if c1 and c2 and c1 != "-" and c2 != "-":
+                    partidos.append({
+                        "torneo": torneo_actual,
+                        "partido": nombres,
+                        "hora": hora,
+                        "c1": c1,
+                        "c2": c2,
+                        "link": link_full
+                    })
             except Exception as e:
-                # Si una fila falla, no rompemos todo
                 continue
 
-        print(f"✅ Extracción exitosa: {len(partidos)} eventos listos.")
+        print(f"✅ Partidos válidos extraídos: {len(partidos)}")
         enviar_discord(partidos)
 
     except Exception as e:
         print(f"❌ Error crítico: {e}")
-        # Tip de debug: Si falla, imprime el HTML para ver qué pasó
-        # print(driver.page_source[:500]) 
-    finally:
-        driver.quit()
-        print("--- 🏁 PROCESO TERMINADO ---")
 
 if __name__ == "__main__":
-    scrapear_betexplorer()
+    scrapear_ligero()

@@ -1,6 +1,4 @@
-requests
-selenium
-webdriver-manager
+cloudscraper
 beautifulsoup4
 pytz
-fake-useragent
+requests

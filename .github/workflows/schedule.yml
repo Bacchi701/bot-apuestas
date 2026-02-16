@@ -1,4 +1,4 @@
-name: Bot Apuestas Scraper
+name: Bot Apuestas
 
 on:
   schedule:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   run-scraper:
-    runs-on: ubuntu-latest # Esto ya incluye Chrome pre-instalado
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout código
         uses: actions/checkout@v3
@@ -20,8 +20,7 @@ jobs:
       - name: Instalar librerías
         run: pip install -r requirements.txt
 
-      - name: Ejecutar Scraper
+      - name: Ejecutar Bot
         env:
           DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
-          # Ya no necesitamos ODDS_API_KEY
         run: python main.py
