@@ -32,10 +32,10 @@ LINKS_CASAS = {
 NOMBRES_TORNEOS = {
     'soccer_chile_campeonato': '🇨🇱 Chile - Primera División',
     'soccer_uefa_champs_league': '🇪🇺 UEFA Champions League',
-    'esports_csgo': '🔫 Counter Strike 2',
-    'esports_valorant': '✨ Valorant',
-    'esports_league_of_legends': '🛡️ League of Legends',
-    'esports_rocket_league': '🚗 Rocket League'
+    'esports_csgo': 'Counter Strike 2',
+    'esports_valorant': 'Valorant',
+    'esports_league_of_legends': 'League of Legends',
+    'esports_rocket_league': 'Rocket League'
 }
 
 # DEPORTES A BUSCAR
@@ -130,8 +130,8 @@ def buscar_apuestas():
                     c_visita = next((x['price'] for x in mercado if x['name'] == evento['away_team']), '-')
                     c_empate = next((x['price'] for x in mercado if x['name'] == 'Draw'), '-')
 
-                    detalle = (f"🕒 {hora_partido}\n"
-                               f"🏠 **{c_local}** | 🤝 {c_empate} | ✈️ **{c_visita}**\n"
+                    detalle = (f"Horario: {hora_partido}\n"
+                               f"Local **{c_local}** | Empate: {c_empate} | Visita: **{c_visita}**\n"
                                f"🔗 Vía: {link}")
                 else:
                     detalle = f"🕒 {hora_partido}\nCuotas no disponibles aún."
