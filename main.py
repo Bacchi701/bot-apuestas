@@ -1,136 +1,145 @@
+import requests
 import os
-import time
-import cloudscraper # La librería mágica
-from bs4 import BeautifulSoup
 from datetime import datetime
 import pytz
-import requests
 
-# --- CONFIGURACIÓN ---
-WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
-TARGET_URL = "https://www.betexplorer.com/next/esports/"
-COLOR_ESPORTS = 10181046 
+# --- CONFIGURACIÓN DE SECRETOS ---
+DISCORD_WEBHOOK = os.environ['DISCORD_WEBHOOK']
+ODDS_API_KEY = os.environ['ODDS_API_KEY']
+PANDASCORE_KEY = os.environ.get('PANDASCORE_KEY') # Usamos .get por si se te olvida ponerla
 
-def obtener_hora_chile():
-    tz_chile = pytz.timezone('America/Santiago')
-    return datetime.now(tz_chile).strftime("%H:%M")
+# --- CONFIGURACIÓN DE APUESTAS (FÚTBOL) ---
+ODDS_URL = "https://api.the-odds-api.com/v4/sports/{}/odds/?apiKey={}&regions=us,eu,uk&markets=h2h&oddsFormat=decimal"
+DEPORTES_FUTBOL = [
+    'soccer_chile_campeonato',
+    'soccer_uefa_champs_league',
+    'soccer_argentina_primera_division',
+    'soccer_spain_la_liga'
+]
 
-def enviar_discord(partidos):
-    if not partidos:
-        print("⚠️ No se encontraron partidos con cuotas para enviar.")
-        return
+# --- CONFIGURACIÓN DE ESPORTS (PANDASCORE) ---
+# PandaScore cubre: csgo, dota2, lol, valorant, overwatch, rocket-league
+PANDA_URL = "https://api.pandascore.co/{}/matches/upcoming?sort=begin_at&token={}"
+DEPORTES_ESPORTS = [
+    'valorant',
+    'csgo', # Counter Strike 2
+    'league-of-legends',
+    'rocket-league'
+]
 
-    # Enviamos en grupos de 10
-    chunks = [partidos[i:i + 10] for i in range(0, len(partidos), 10)]
+def obtener_hora_chile(fecha_iso):
+    try:
+        # Intentamos parsear formato ISO estándar
+        if 'T' in fecha_iso:
+            fecha_dt = datetime.strptime(fecha_iso.split('+')[0], "%Y-%m-%dT%H:%M:%SZ")
+        else:
+            fecha_dt = datetime.strptime(fecha_iso, "%Y-%m-%d %H:%M:%S")
+            
+        fecha_dt = fecha_dt.replace(tzinfo=pytz.utc)
+        tz_chile = pytz.timezone('America/Santiago')
+        fecha_chile = fecha_dt.astimezone(tz_chile)
+        return fecha_chile.strftime("%H:%M")
+    except:
+        return "Pronto"
 
+def enviar_discord(titulo, color, campos):
+    if not campos: return
+    
+    # Enviamos en bloques para no romper Discord
+    chunks = [campos[i:i+10] for i in range(0, len(campos), 10)]
+    
     for chunk in chunks:
-        fields = []
-        for p in chunk:
-            fields.append({
-                "name": f"⏰ {p['hora']} | {p['torneo']}",
-                "value": f"🎮 **{p['partido']}**\n"
-                         f"📊 1: **{p['c1']}** | 2: **{p['c2']}**\n"
-                         f"🔗 [Ver Detalles]({p['link']})",
-                "inline": False
-            })
-
         embed = {
             "embeds": [{
-                "title": "👾 Alerta eSports - BetExplorer",
-                "description": "Partidos próximos detectados vía CloudScraper",
-                "color": COLOR_ESPORTS,
-                "fields": fields,
-                "footer": {"text": f"Modo Ligero v3.0 | Hora: {obtener_hora_chile()}"}
+                "title": titulo,
+                "color": color,
+                "fields": chunk,
+                "footer": {"text": "Bot Híbrido: OddsAPI + PandaScore"}
             }]
         }
+        requests.post(DISCORD_WEBHOOK, json=embed)
+
+def procesar_futbol():
+    print("--- ⚽ BUSCANDO FÚTBOL (THE ODDS API) ---")
+    campos = []
+    
+    for deporte in DEPORTES_FUTBOL:
         try:
-            requests.post(WEBHOOK_URL, json=embed)
-            time.sleep(1)
+            url = ODDS_URL.format(deporte, ODDS_API_KEY)
+            res = requests.get(url)
+            if res.status_code != 200: continue
+            
+            data = res.json()
+            for evento in data[:5]: # Top 5 por liga
+                equipos = f"{evento['home_team']} vs {evento['away_team']}"
+                hora = obtener_hora_chile(evento['commence_time'])
+                
+                # Buscamos cuotas
+                cuotas_txt = "Cuotas no disponibles"
+                if evento['bookmakers']:
+                    # Prioridad a casas conocidas
+                    casa = evento['bookmakers'][0]
+                    for b in evento['bookmakers']:
+                        if b['title'] in ['Coolbet', 'Betano', 'Bet365', '1xBet']:
+                            casa = b
+                            break
+                    
+                    mercado = casa['markets'][0]['outcomes']
+                    c1 = next((x['price'] for x in mercado if x['name'] == evento['home_team']), '-')
+                    c2 = next((x['price'] for x in mercado if x['name'] == evento['away_team']), '-')
+                    cuotas_txt = f"🏠 {c1} | ✈️ {c2} ({casa['title']})"
+
+                campos.append({
+                    "name": f"⏰ {hora} | {deporte.replace('soccer_','').replace('_',' ').title()}",
+                    "value": f"**{equipos}**\n{cuotas_txt}",
+                    "inline": False
+                })
         except Exception as e:
-            print(f"Error enviando a Discord: {e}")
-
-def scrapear_ligero():
-    print("--- 🚀 INICIANDO MODO LIGERO (CLOUDSCRAPER) ---")
-    
-    # Creamos un scraper que simula ser Chrome pero sin abrir Chrome
-    scraper = cloudscraper.create_scraper()
-    
-    try:
-        print(f"Consultando: {TARGET_URL}")
-        response = scraper.get(TARGET_URL)
-        
-        if response.status_code != 200:
-            print(f"❌ Error al entrar a la página: {response.status_code}")
-            return
-
-        print("✅ Página descargada. Analizando HTML...")
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Buscamos la tabla principal
-        tabla = soup.find("table", class_="table-main")
-        if not tabla:
-            print("⚠️ No encontré la tabla de partidos. Puede que la página haya cambiado o Cloudflare nos bloqueó.")
-            # Debug: imprimir un poco del texto para ver qué pasó
-            print(f"Contenido recibido: {response.text[:200]}...")
-            return
-
-        filas = tabla.find_all("tr")
-        print(f"🔍 Filas detectadas: {len(filas)}")
-        
-        partidos = []
-        torneo_actual = "Torneo General"
-
-        for fila in filas:
-            # Detectar Torneo
-            if "js-tournament" in fila.get("class", []):
-                link_t = fila.find("a")
-                if link_t: torneo_actual = link_t.text.strip()
-                continue
+            print(f"Error en fútbol: {e}")
             
-            # Ignorar cabeceras
-            if "rt" in fila.get("class", []): continue
+    enviar_discord("⚽ Alertas de Fútbol", 5763719, campos)
+
+def procesar_esports():
+    print("--- 🎮 BUSCANDO ESPORTS (PANDASCORE) ---")
+    if not PANDASCORE_KEY:
+        print("⚠️ Falta la PANDASCORE_KEY en GitHub Secrets.")
+        return
+
+    campos = []
+    for juego in DEPORTES_ESPORTS:
+        try:
+            # Pedimos los próximos 5 partidos de cada juego
+            url = PANDA_URL.format(juego, PANDASCORE_KEY) + "&page[size]=5"
+            res = requests.get(url)
             
-            cols = fila.find_all("td")
-            if len(cols) < 5: continue
-
-            try:
-                # Extracción de datos
-                nombres = cols[0].text.strip()
-                # Limpieza de nombre (a veces tiene basura)
-                nombres = " ".join(nombres.split())
-                
-                link_suffix = cols[0].find("a")['href'] if cols[0].find("a") else ""
-                link_full = "https://www.betexplorer.com" + link_suffix if link_suffix else TARGET_URL
-                
-                hora = cols[1].text.strip()
-                if not hora: hora = "Hoy"
-
-                # Cuotas (buscamos atributos data-odd que usa BetExplorer)
-                odds = fila.find_all("td", attrs={"data-odd": True})
-                
-                c1, c2 = "-", "-"
-                if len(odds) >= 2:
-                    c1 = odds[0].text.strip()
-                    c2 = odds[1].text.strip()
-                
-                # Solo guardamos si hay cuotas válidas (distinto de guión o vacío)
-                if c1 and c2 and c1 != "-" and c2 != "-":
-                    partidos.append({
-                        "torneo": torneo_actual,
-                        "partido": nombres,
-                        "hora": hora,
-                        "c1": c1,
-                        "c2": c2,
-                        "link": link_full
-                    })
-            except Exception as e:
+            if res.status_code != 200:
+                print(f"Error PandaScore {juego}: {res.status_code}")
                 continue
+                
+            match_data = res.json()
+            
+            for match in match_data:
+                if not match['opponents']: continue # Si no hay equipos definidos, saltar
+                
+                eq1 = match['opponents'][0]['opponent']['name']
+                eq2 = match['opponents'][1]['opponent']['name']
+                hora = obtener_hora_chile(match['begin_at'])
+                torneo = match['league']['name']
+                
+                # PandaScore Free no siempre da cuotas, pero avisamos del partido
+                detalle = f"🏆 {torneo}\n⚠️ Revisar casas para cuotas"
+                
+                campos.append({
+                    "name": f"⏰ {hora} | {juego.upper()}",
+                    "value": f"🎮 **{eq1} vs {eq2}**\n{detalle}",
+                    "inline": False
+                })
+                
+        except Exception as e:
+            print(f"Error en eSports {juego}: {e}")
 
-        print(f"✅ Partidos válidos extraídos: {len(partidos)}")
-        enviar_discord(partidos)
-
-    except Exception as e:
-        print(f"❌ Error crítico: {e}")
+    enviar_discord("👾 Alertas de eSports (Oficial)", 10181046, campos)
 
 if __name__ == "__main__":
-    scrapear_ligero()
+    procesar_futbol()
+    procesar_esports()
