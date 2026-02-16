@@ -1,12 +1,12 @@
 import os
 import time
 import requests
-import json
+import re
 from datetime import datetime
 import pytz
 from bs4 import BeautifulSoup
 
-# Librerías de Scraping (Navegador)
+# Librerías de Navegador
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -19,10 +19,9 @@ from fake_useragent import UserAgent
 # --- CONFIGURACIÓN ---
 WEBHOOK_URL = os.environ['DISCORD_WEBHOOK']
 
-# URL Objetivo: OddsPortal Próximos Partidos de eSports
-TARGET_URL = "https://www.oddsportal.com/matches/esports/"
+# Usamos BetExplorer (Más fácil de leer)
+TARGET_URL = "https://www.betexplorer.com/next/esports/"
 
-# Configuración de colores para Discord
 COLOR_ESPORTS = 10181046 # Morado
 
 def obtener_hora_chile():
@@ -30,142 +29,134 @@ def obtener_hora_chile():
     return datetime.now(tz_chile).strftime("%H:%M")
 
 def configurar_driver():
-    """Configura un navegador Chrome indetectable (headless)"""
     ua = UserAgent()
-    user_agent = ua.random
-
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new") # Sin interfaz gráfica
+    chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument(f'user-agent={user_agent}')
+    chrome_options.add_argument(f'user-agent={ua.random}')
     chrome_options.add_argument("--window-size=1920,1080")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled") # Ocultar que es un bot
     
-    # Instalamos el driver automáticamente
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
 def enviar_discord(partidos):
-    if not partidos:
-        print("No hay partidos para enviar.")
-        return
+    if not partidos: return
 
-    # Dividimos en bloques de 10 para no saturar el mensaje
+    # Dividimos en bloques de 10
     chunks = [partidos[i:i + 10] for i in range(0, len(partidos), 10)]
 
     for chunk in chunks:
         fields = []
         for p in chunk:
             fields.append({
-                "name": f"{p['hora']} | {p['torneo']}",
-                "value": f"🎮 **{p['equipo1']}** vs **{p['equipo2']}**\n"
-                         f"💰 1: **{p['cuota1']}** | 2: **{p['cuota2']}**\n"
-                         f"🔗 [Ver en OddsPortal]({p['link']})",
+                "name": f"⏰ {p['hora']} | {p['torneo']}",
+                "value": f"🎮 **{p['partido']}**\n"
+                         f"📊 1: **{p['c1']}** | 2: **{p['c2']}**\n"
+                         f"🔗 [Ver en BetExplorer]({p['link']})",
                 "inline": False
             })
 
         embed = {
             "embeds": [{
-                "title": "👾 Alerta eSports - OddsPortal",
-                "description": "Mejores cuotas detectadas en el mercado.",
+                "title": "👾 Alerta eSports - BetExplorer",
                 "color": COLOR_ESPORTS,
                 "fields": fields,
-                "footer": {"text": f"Scraper v1.0 | Hora Actual: {obtener_hora_chile()}"}
+                "footer": {"text": f"Scraper v2.0 | Hora Actual: {obtener_hora_chile()}"}
             }]
         }
         requests.post(WEBHOOK_URL, json=embed)
-        time.sleep(1) # Pausa pequeña para no spamear
+        time.sleep(1) 
 
-def scrapear_oddsportal():
-    print("--- 🕷️ INICIANDO SCRAPER DE ODDSPORTAL ---")
+def limpiar_texto(texto):
+    """Elimina espacios extra y saltos de línea"""
+    return " ".join(texto.split())
+
+def scrapear_betexplorer():
+    print("--- 🕵️ INICIANDO RASTREO EN BETEXPLORER ---")
     driver = configurar_driver()
     
     try:
         print(f"Navegando a: {TARGET_URL}")
         driver.get(TARGET_URL)
         
-        # Esperamos hasta 15 segundos a que aparezca la tabla de partidos
-        # Buscamos un elemento común en OddsPortal (suelen cambiar clases, buscamos algo genérico)
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div[class*='eventRow']"))
+        # Esperamos a que aparezca la tabla de partidos (clase 'table-main')
+        WebDriverWait(driver, 20).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "table-main"))
         )
-        print("✅ Página cargada. Extrayendo HTML...")
+        print("✅ Tabla detectada. Analizando datos...")
         
-        # Pasamos el HTML a BeautifulSoup para procesarlo rápido
         soup = BeautifulSoup(driver.page_source, 'html.parser')
+        tabla = soup.find("table", class_="table-main")
+        filas = tabla.find_all("tr")
         
-        partidos_encontrados = []
+        print(f"🔍 Filas totales encontradas: {len(filas)}")
         
-        # OddsPortal usa filas con clases dinámicas, pero suelen contener "eventRow"
-        # OJO: Esto puede requerir ajustes si cambian el diseño
-        filas = soup.select("div[class*='eventRow']")
-        
-        print(f"🔍 Se detectaron {len(filas)} filas potenciales.")
+        partidos = []
+        torneo_actual = "Torneo General" # Guardamos el último torneo visto (filas header)
 
-        for fila in filas[:15]: # Limitamos a los primeros 15 próximos
+        for fila in filas:
+            # 1. ¿Es un título de torneo? (Suelen tener links a la liga)
+            if "js-tournament" in fila.get("class", []):
+                link_torneo = fila.find("a")
+                if link_torneo:
+                    torneo_actual = link_torneo.text.strip()
+                continue
+            
+            # 2. ¿Es un partido? (No debe tener la clase 'rt' que es header de tabla)
+            if "rt" in fila.get("class", []):
+                continue
+                
+            cols = fila.find_all("td")
+            if len(cols) < 5: continue # Si no tiene suficientes columnas, no sirve
+
             try:
-                # Extraer Texto del Torneo (A veces está en un header anterior, simplificamos aquí)
-                # Intentamos sacar equipos
-                textos = list(fila.stripped_strings)
+                # Extracción Robusta
+                nombre_partido = limpiar_texto(cols[0].text)
+                link_partido = "https://www.betexplorer.com" + cols[0].find("a")['href'] if cols[0].find("a") else TARGET_URL
                 
-                # Lógica heurística: Si tiene menos de 4 elementos, probablemente no es un partido válido
-                if len(textos) < 4: continue
+                # La hora suele estar en la columna 1 o dentro del texto
+                hora = limpiar_texto(cols[1].text)
+                if not hora: hora = "Hoy"
                 
-                # En OddsPortal la estructura suele ser: Hora, Equipo1, Equipo2, Cuota1, Cuota2
-                # Esta parte es la más delicada y depende del CSS actual de OddsPortal
+                # Cuotas (Suelen estar al final)
+                # Buscamos columnas con atributos data-odd
+                odds = fila.find_all("td", attrs={"data-odd": True})
                 
-                # Intentamos buscar los nombres de equipos específicamente
-                participantes = fila.select("a[class*='participant-name']")
-                if len(participantes) < 2: continue
-                
-                equipo1 = participantes[0].text.strip()
-                equipo2 = participantes[1].text.strip()
-                
-                # Buscamos cuotas (suelen estar en divs con clase 'odds')
-                cuotas = fila.select("div[class*='odds-height']")
                 c1 = "-"
                 c2 = "-"
                 
-                if len(cuotas) >= 2:
-                    c1 = cuotas[0].text.strip()
-                    c2 = cuotas[1].text.strip()
+                if len(odds) >= 2:
+                    c1 = odds[0].text.strip()
+                    c2 = odds[1].text.strip()
                 
-                # Link del partido
-                link_elem = fila.select_one("a[href^='/esports/']")
-                link = "https://www.oddsportal.com" + link_elem['href'] if link_elem else TARGET_URL
-                
-                # Hora (Suele ser el primer texto)
-                hora = textos[0] if textos else "Hoy"
+                # Filtro: Si no hay cuotas reales, saltamos
+                if c1 == "" or c2 == "": continue
 
-                # Filtro simple: Si no hay cuotas, pasamos
-                if c1 == "-" or c2 == "-": continue
-
-                partidos_encontrados.append({
-                    "torneo": "eSports General", # Difícil de sacar preciso sin lógica compleja
+                partidos.append({
+                    "torneo": torneo_actual,
+                    "partido": nombre_partido,
                     "hora": hora,
-                    "equipo1": equipo1,
-                    "equipo2": equipo2,
-                    "cuota1": c1,
-                    "cuota2": c2,
-                    "link": link
+                    "c1": c1,
+                    "c2": c2,
+                    "link": link_partido
                 })
                 
             except Exception as e:
-                # Si falla una fila, seguimos con la otra
+                # Si una fila falla, no rompemos todo
                 continue
 
-        print(f"✅ Extracción finalizada: {len(partidos_encontrados)} partidos válidos.")
-        enviar_discord(partidos_encontrados)
+        print(f"✅ Extracción exitosa: {len(partidos)} eventos listos.")
+        enviar_discord(partidos)
 
     except Exception as e:
-        print(f"❌ Error durante el scraping: {e}")
-        # Tomar captura de pantalla para debug (opcional, se guarda en el servidor)
-        # driver.save_screenshot("error_screenshot.png")
+        print(f"❌ Error crítico: {e}")
+        # Tip de debug: Si falla, imprime el HTML para ver qué pasó
+        # print(driver.page_source[:500]) 
     finally:
         driver.quit()
-        print("--- 🏁 DRIVER CERRADO ---")
+        print("--- 🏁 PROCESO TERMINADO ---")
 
 if __name__ == "__main__":
-    scrapear_oddsportal()
+    scrapear_betexplorer()
