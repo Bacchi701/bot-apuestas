@@ -28,4 +28,4 @@ jobs:
           PANDASCORE_KEY: ${{ secrets.PANDASCORE_KEY }}
         # Asegúrate de que este nombre coincida con tu archivo (bot_nuevo.py o main.py)
         # Si creaste bot_nuevo.py usa ese. Si actualizaste main.py, usa main.py
-        run: python bot_nuevo.py
+        run: python main.py
